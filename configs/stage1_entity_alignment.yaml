@@ -1,0 +1,15 @@
+run_name: stage1_entity_alignment
+seed: 42
+base_model: llava-hf/llava-1.5-7b-hf
+load_in_4bit: true
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+epochs: 1
+batch_size: 4
+grad_accum: 4
+lr: 2.0e-4
+warmup_ratio: 0.03
+wandb: true
+# Tip: start with max_samples: 5000 for a first pass, then scale up
+max_samples: null

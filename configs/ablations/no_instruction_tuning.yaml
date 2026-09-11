@@ -1,0 +1,9 @@
+run_name: ablation_no_tuning
+seed: 42
+base_model: llava-hf/llava-1.5-7b-hf
+load_in_4bit: true
+use_instruction_tuning: false
+use_retrieval: true
+use_reranking: true
+generate_explanations: true
+search_provider: serper

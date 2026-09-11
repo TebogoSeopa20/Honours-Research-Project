@@ -1,0 +1,9 @@
+run_name: ablation_no_retrieval
+seed: 42
+base_model: llava-hf/llava-1.5-7b-hf
+load_in_4bit: true
+stage2_adapter: outputs/checkpoints/stage2
+use_instruction_tuning: true
+use_retrieval: false
+use_reranking: false
+generate_explanations: true

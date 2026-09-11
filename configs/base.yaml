@@ -1,0 +1,27 @@
+# Shared defaults. Other configs override only what changes.
+run_name: base
+seed: 42
+output_dir: outputs
+wandb: false
+wandb_project: lvlm-misinfo-detection
+
+data_dir: data
+newsclippings_dir: data/newsclippings
+visualnews_dir: data/visualnews
+mmfakebench_dir: data/mmfakebench
+cosmos_dir: data/cosmos
+max_samples: null            # set e.g. 200 for smoke tests
+
+base_model: llava-hf/llava-1.5-7b-hf
+load_in_4bit: true
+max_new_tokens: 256
+temperature: 0.0
+
+use_instruction_tuning: false
+use_retrieval: false
+use_reranking: false
+generate_explanations: true
+retrieval_top_k: 8
+rerank_keep_k: 3
+search_provider: serper      # serper | bing | offline
+search_api_key_env: SEARCH_API_KEY

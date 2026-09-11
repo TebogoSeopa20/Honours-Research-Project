@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "misinfodet"
+version = "0.1.0"
+description = "LVLM-based image-text misinformation detection (Wits Honours research)"
+authors = [{ name = "Tebogo Seopa" }]
+requires-python = ">=3.10"
+dependencies = [
+    # PyPI never published macOS x86_64 (Intel) wheels past torch 2.2.2,
+    # and transformers>=5 requires torch>=2.5 to enable tensor ops. Pin
+    # Intel Mac to a compatible older stack for local CPU-only dev; other
+    # platforms (Kaggle/cluster Linux, Apple Silicon) get the modern one.
+    "torch>=2.2,<2.3; sys_platform=='darwin' and platform_machine=='x86_64'",
+    "torch>=2.5; sys_platform!='darwin' or platform_machine!='x86_64'",
+    "transformers>=4.44,<5; sys_platform=='darwin' and platform_machine=='x86_64'",
+    "transformers>=4.44; sys_platform!='darwin' or platform_machine!='x86_64'",
+    "numpy>=1.26,<2; sys_platform=='darwin' and platform_machine=='x86_64'",
+    "numpy>=1.26; sys_platform!='darwin' or platform_machine!='x86_64'",
+    "peft>=0.12",
+    "accelerate>=0.33",
+    "bitsandbytes>=0.43; platform_system=='Linux'",
+    "datasets>=2.20",
+    "Pillow>=10.0",
+    "scikit-learn>=1.4",
+    "pandas>=2.2",
+    "PyYAML>=6.0",
+    "tqdm>=4.66",
+    "requests>=2.31",
+    "sentence-transformers>=3.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+tracking = ["wandb>=0.17"]
+dev = ["pytest>=8.0", "wandb>=0.17"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

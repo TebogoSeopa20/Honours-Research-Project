@@ -1,0 +1,2 @@
+# Pinned via pyproject.toml; this file exists for pip install -r convenience
+-e .[dev]

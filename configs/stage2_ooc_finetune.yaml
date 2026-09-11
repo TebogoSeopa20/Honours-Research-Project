@@ -1,0 +1,15 @@
+run_name: stage2_ooc_finetune
+seed: 42
+base_model: llava-hf/llava-1.5-7b-hf
+load_in_4bit: true
+stage1_adapter: outputs/checkpoints/stage1
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+epochs: 1
+batch_size: 4
+grad_accum: 4
+lr: 1.0e-4
+warmup_ratio: 0.03
+wandb: true
+max_samples: null
