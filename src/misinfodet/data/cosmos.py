@@ -30,6 +30,10 @@ single-caption one.
 Schema: {"id", "image_path", "caption1", "caption2", "label", "source"}
 label: 0 = not out-of-context, 1 = out-of-context.
 
+Despite the ".json" extension, these annotation files are actually JSONL —
+one complete JSON object per line, not a single wrapping array. Confirmed
+directly against real downloaded files, not assumed.
+
 Only ~1,700 test images carry any label at all — see docs/DATASETS.md for
 why this caps how much labeled train/val/test data is actually available.
 prepare_all splits this pool 70/15/15 (stratified, seeded) into
@@ -44,6 +48,19 @@ from pathlib import Path
 from ..utils import get_logger, write_jsonl
 
 log = get_logger(__name__)
+
+
+def _read_jsonl(path: Path) -> list[dict]:
+    """COSMOS's *_data.json files are JSONL despite the extension — one
+    JSON object per line, not a single array. Do not swap this for a plain
+    json.load(f); that fails with "Extra data" past the first line."""
+    records = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(json.loads(line))
+    return records
 
 
 def _image_path(cosmos_dir: str | Path, img_local_path: str) -> str:
@@ -65,8 +82,7 @@ def prepare_unlabeled_split(
         raise FileNotFoundError(
             f"COSMOS {split}_data.json not found at {ann_path} (see docs/DATASETS.md)."
         )
-    with open(ann_path, "r", encoding="utf-8") as f:
-        entries = json.load(f)
+    entries = _read_jsonl(ann_path)
 
     records = []
     for i, entry in enumerate(entries):
@@ -102,20 +118,30 @@ def _load_test_records(cosmos_dir: str | Path, max_samples: int | None = None) -
         raise FileNotFoundError(
             f"COSMOS test_data.json not found at {ann_path} (see docs/DATASETS.md)."
         )
-    with open(ann_path, "r", encoding="utf-8") as f:
-        entries = json.load(f)
+    entries = _read_jsonl(ann_path)
 
     records = []
     for i, entry in enumerate(entries):
         if max_samples is not None and len(records) >= max_samples:
             break
+        # Real field is "context_label", not "label" as originally assumed —
+        # confirmed against actual downloaded data. Fallback to "label" kept
+        # in case either name shows up across different COSMOS releases.
+        if "context_label" in entry:
+            label_raw = entry["context_label"]
+        elif "label" in entry:
+            label_raw = entry["label"]
+        else:
+            raise KeyError(
+                f"No 'context_label' or 'label' field on entry {entry.get('img_local_path')}"
+            )
         records.append(
             {
                 "id": f"cosmos_test_{i}",
                 "image_path": _image_path(cosmos_dir, entry["img_local_path"]),
                 "caption1": entry["caption1"],
                 "caption2": entry["caption2"],
-                "label": _to_binary_label(entry["label"]),
+                "label": _to_binary_label(label_raw),
                 "source": "cosmos",
             }
         )
