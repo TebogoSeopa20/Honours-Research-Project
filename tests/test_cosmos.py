@@ -84,3 +84,21 @@ def test_split_labeled_is_stratified_and_covers_everything():
     assert 38 <= len(train) <= 46
     assert 5 <= len(val) <= 13
     assert 5 <= len(test) <= 13
+
+
+def test_unlabeled_split_shuffles_before_capping(tmp_path):
+    """max_samples must be a random draw across the whole file, not just
+    the first N entries in file order — file order may not be random
+    (e.g. grouped by source), which would bias any Stage 1 subsample."""
+    entries = [
+        {"img_local_path": f"train/{i}.jpg", "articles": [{"caption": f"caption {i}"}]}
+        for i in range(200)
+    ]
+    _write_jsonl_fixture(tmp_path / "train_data.json", entries)
+    out = tmp_path / "out.jsonl"
+    prepare_unlabeled_split(tmp_path, "train", out, max_samples=10, seed=42)
+    records = [json.loads(l) for l in out.read_text().splitlines()]
+    indices = [int(r["caption"].split()[-1]) for r in records]
+    assert len(indices) == 10
+    # if truncation (not shuffling) happened, every index would be < 10
+    assert max(indices) >= 20

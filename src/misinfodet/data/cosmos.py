@@ -72,8 +72,14 @@ def prepare_unlabeled_split(
     split: str,
     out_path: str | Path,
     max_samples: int | None = None,
+    seed: int = 42,
 ) -> int:
-    """train or val -> one record per (image, article caption). No labels."""
+    """train or val -> one record per (image, article caption). No labels.
+
+    When max_samples caps the output, images are shuffled first (seeded,
+    reproducible) so the subset is a random draw across the whole split,
+    not just whichever images happen to come first in the annotation file.
+    """
     if split not in ("train", "val"):
         raise ValueError("prepare_unlabeled_split is for 'train' or 'val' only")
 
@@ -83,6 +89,9 @@ def prepare_unlabeled_split(
             f"COSMOS {split}_data.json not found at {ann_path} (see docs/DATASETS.md)."
         )
     entries = _read_jsonl(ann_path)
+    if max_samples is not None:
+        import random
+        random.Random(seed).shuffle(entries)
 
     records = []
     for i, entry in enumerate(entries):
@@ -198,8 +207,8 @@ def prepare_all(
     """
     out_dir = Path(out_dir)
     counts = {
-        "train": prepare_unlabeled_split(cosmos_dir, "train", out_dir / "cosmos_train.jsonl", max_samples),
-        "val": prepare_unlabeled_split(cosmos_dir, "val", out_dir / "cosmos_val.jsonl", max_samples),
+        "train": prepare_unlabeled_split(cosmos_dir, "train", out_dir / "cosmos_train.jsonl", max_samples, seed=seed),
+        "val": prepare_unlabeled_split(cosmos_dir, "val", out_dir / "cosmos_val.jsonl", max_samples, seed=seed),
     }
 
     all_labeled = list(_load_test_records(cosmos_dir, max_samples))
