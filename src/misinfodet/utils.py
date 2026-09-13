@@ -61,6 +61,7 @@ class Config:
     batch_size: int = 4
     grad_accum: int = 4
     save_every_steps: int = 50
+    kaggle_checkpoint_dataset: str = ""  # e.g. "yourusername/stage1-checkpoints"
     lr: float = 2e-4
     warmup_ratio: float = 0.03
 

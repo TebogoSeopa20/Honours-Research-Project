@@ -7,11 +7,43 @@ auditable for the methodology chapter.
 from __future__ import annotations
 
 import math
+import subprocess
 from pathlib import Path
 
 from ..utils import Config, get_logger
 
 log = get_logger(__name__)
+
+
+def _upload_checkpoint_to_kaggle(save_dir: Path, dataset_slug: str) -> None:
+    """Push the current checkpoint to a Kaggle Dataset immediately, so a
+    session dying (hard 12h cap, wifi, browser crash — three different
+    causes have now lost three different runs) doesn't erase it. Never
+    raises: a failed safety upload should not crash the actual training.
+    """
+    try:
+        # "version" updates an EXISTING dataset; only the first checkpoint
+        # needs "init" + "create" to establish it.
+        result = subprocess.run(
+            ["kaggle", "datasets", "version", "-p", str(save_dir), "-m", "checkpoint"],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode != 0:
+            meta_path = save_dir / "dataset-metadata.json"
+            if not meta_path.exists():
+                subprocess.run(["kaggle", "datasets", "init", "-p", str(save_dir)],
+                              capture_output=True, text=True, timeout=60)
+                import json
+                json.dump(
+                    {"title": dataset_slug.split("/")[-1], "id": dataset_slug,
+                     "licenses": [{"name": "CC0-1.0"}]},
+                    open(meta_path, "w"),
+                )
+            subprocess.run(["kaggle", "datasets", "create", "-p", str(save_dir)],
+                          capture_output=True, text=True, timeout=300)
+        log.info("Checkpoint pushed to Kaggle dataset %s", dataset_slug)
+    except Exception as e:
+        log.warning("Kaggle checkpoint upload failed (%s); local copy still saved", e)
 
 
 class InstructionDataset:
@@ -168,6 +200,8 @@ def train(
                         "Checkpoint saved at step %d (epoch %d) to %s",
                         global_step, epoch, save_dir,
                     )
+                    if cfg.kaggle_checkpoint_dataset:
+                        _upload_checkpoint_to_kaggle(save_dir, cfg.kaggle_checkpoint_dataset)
                     # Held-out loss at the same cadence as checkpoints. This
                     # is the actual answer to "is more training still
                     # helping" — training loss alone will keep dropping
@@ -191,5 +225,7 @@ def train(
     model.save_pretrained(save_dir)
     processor.save_pretrained(save_dir)
     log.info("Adapter saved to %s", save_dir)
+    if cfg.kaggle_checkpoint_dataset:
+        _upload_checkpoint_to_kaggle(save_dir, cfg.kaggle_checkpoint_dataset)
     if wandb_run:
         wandb_run.finish()
