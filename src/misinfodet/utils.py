@@ -60,6 +60,7 @@ class Config:
     epochs: int = 1
     batch_size: int = 4
     grad_accum: int = 4
+    save_every_steps: int = 50
     lr: float = 2e-4
     warmup_ratio: float = 0.03
 

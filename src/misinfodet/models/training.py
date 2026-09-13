@@ -76,6 +76,9 @@ def train(model, processor, examples: list[dict], cfg: Config, save_dir: str | P
     import torch
     from torch.utils.data import DataLoader
 
+    save_dir = Path(save_dir)
+    save_dir.mkdir(parents=True, exist_ok=True)
+
     dataset = InstructionDataset(examples)
     loader = DataLoader(
         dataset, batch_size=cfg.batch_size, shuffle=True,
@@ -123,9 +126,19 @@ def train(model, processor, examples: list[dict], cfg: Config, save_dir: str | P
                     if wandb_run:
                         wandb_run.log({"loss": avg, "epoch": epoch}, step=global_step)
                     running = 0.0
+                # Periodic checkpoint — a multi-hour unattended run (session
+                # drop, accelerator change, timeout) loses only progress
+                # since the LAST of these, not everything back to step 0.
+                # Overwrites in place: LoRA adapters are small, and we only
+                # need the most recent one, not a history of all of them.
+                if cfg.save_every_steps and global_step % cfg.save_every_steps == 0:
+                    model.save_pretrained(save_dir)
+                    processor.save_pretrained(save_dir)
+                    log.info(
+                        "Checkpoint saved at step %d (epoch %d) to %s",
+                        global_step, epoch, save_dir,
+                    )
 
-    save_dir = Path(save_dir)
-    save_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(save_dir)
     processor.save_pretrained(save_dir)
     log.info("Adapter saved to %s", save_dir)
