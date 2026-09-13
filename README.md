@@ -136,14 +136,6 @@ report are fully reproducible. Weights & Biases logging is on by default
   Section 3.5 of the proposal and `evaluation/ablation_report.py` builds a
   LaTeX-ready comparison table.
 
-## Reproducibility and academic integrity
-
-- All randomness is seeded via `misinfodet.utils.set_seed`.
-- Remember to update the Wits AI declaration for the final research report:
-  this codebase is AI-assisted, so items **3 (Methods and Experiment Design)**,
-  **4 (Data Analysis)** and **6 (Code Development)** should be ticked, and the
-  methodology chapter should state how generative AI was used, as the
-  declaration requires.
 
 ## Citation anchors
 
