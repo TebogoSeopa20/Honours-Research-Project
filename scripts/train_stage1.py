@@ -22,10 +22,21 @@ def main():
         examples = examples[: cfg.max_samples]
     print(f"Stage 1: {len(examples)} entity-alignment examples")
 
+    # Genuinely separate COSMOS split (no overlap with cosmos_train.jsonl) —
+    # used to catch overfitting. Training loss alone will keep dropping the
+    # longer/harder you train; only a held-out loss tells you whether that's
+    # real improvement or memorization of the training subsample.
+    val_examples = None
+    val_path = Path(cfg.data_dir) / "cosmos_val.jsonl"
+    if val_path.exists():
+        val_records = read_jsonl(val_path)
+        val_examples = list(build_stage1_examples(val_records, seed=cfg.seed))
+        print(f"Stage 1: {len(val_examples)} held-out validation examples")
+
     save_dir = Path(cfg.output_dir) / "checkpoints" / "stage1"
     write_run_meta(cfg, save_dir)
     model, processor = load_llava(cfg, trainable=True)
-    train(model, processor, examples, cfg, save_dir)
+    train(model, processor, examples, cfg, save_dir, val_examples=val_examples)
 
 
 if __name__ == "__main__":

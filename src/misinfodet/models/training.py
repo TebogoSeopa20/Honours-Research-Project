@@ -72,7 +72,29 @@ def make_collate_fn(processor):
     return collate
 
 
-def train(model, processor, examples: list[dict], cfg: Config, save_dir: str | Path) -> None:
+def _eval_loss(model, loader, cfg: Config, max_batches: int = 50) -> float:
+    """Average loss over a capped number of held-out batches, no gradients.
+    Capped so eval doesn't itself become a meaningful chunk of the run time
+    on every checkpoint interval."""
+    import torch
+
+    model.eval()
+    total, n = 0.0, 0
+    with torch.no_grad():
+        for i, batch in enumerate(loader):
+            if i >= max_batches:
+                break
+            batch = {k: v.to(model.device) for k, v in batch.items()}
+            total += model(**batch).loss.item()
+            n += 1
+    model.train()
+    return total / max(n, 1)
+
+
+def train(
+    model, processor, examples: list[dict], cfg: Config, save_dir: str | Path,
+    val_examples: list[dict] | None = None,
+) -> None:
     import torch
     from torch.utils.data import DataLoader
 
@@ -80,10 +102,17 @@ def train(model, processor, examples: list[dict], cfg: Config, save_dir: str | P
     save_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = InstructionDataset(examples)
+    collate_fn = make_collate_fn(processor)
     loader = DataLoader(
-        dataset, batch_size=cfg.batch_size, shuffle=True,
-        collate_fn=make_collate_fn(processor),
+        dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_fn,
     )
+
+    val_loader = None
+    if val_examples:
+        val_loader = DataLoader(
+            InstructionDataset(val_examples), batch_size=cfg.batch_size,
+            shuffle=True, collate_fn=collate_fn,
+        )
 
     steps_per_epoch = math.ceil(len(loader) / cfg.grad_accum)
     total_steps = steps_per_epoch * cfg.epochs
@@ -107,6 +136,7 @@ def train(model, processor, examples: list[dict], cfg: Config, save_dir: str | P
 
     model.train()
     global_step = 0
+    best_val_loss = float("inf")
     for epoch in range(cfg.epochs):
         running = 0.0
         for step, batch in enumerate(loader):
@@ -138,6 +168,25 @@ def train(model, processor, examples: list[dict], cfg: Config, save_dir: str | P
                         "Checkpoint saved at step %d (epoch %d) to %s",
                         global_step, epoch, save_dir,
                     )
+                    # Held-out loss at the same cadence as checkpoints. This
+                    # is the actual answer to "is more training still
+                    # helping" — training loss alone will keep dropping
+                    # regardless of whether the model is generalizing or
+                    # just memorizing the training subsample.
+                    if val_loader is not None:
+                        vloss = _eval_loss(model, val_loader, cfg)
+                        log.info(
+                            "epoch %d step %d val_loss %.4f%s",
+                            epoch, global_step, vloss,
+                            " (new best)" if vloss < best_val_loss else "",
+                        )
+                        if wandb_run:
+                            wandb_run.log({"val_loss": vloss}, step=global_step)
+                        if vloss < best_val_loss:
+                            best_val_loss = vloss
+                            best_dir = save_dir.parent / f"{save_dir.name}_best"
+                            model.save_pretrained(best_dir)
+                            processor.save_pretrained(best_dir)
 
     model.save_pretrained(save_dir)
     processor.save_pretrained(save_dir)
