@@ -14,7 +14,7 @@ literature review:
 | LVLM-based evidence re-ranking | LVLM4FV (Tahmasebi et al., 2024) | Noisy retrieval hurts accuracy |
 | Explanation generation + explanation-quality evaluation | MOCHEG (Yao et al., 2023) | Explainability as first-class goal |
 
-Primary benchmark: **COSMOS** (Aneja et al., 2021) — switched from NewsCLIPpings
+Primary benchmark: **COSMOS** (Aneja et al., 2021) - switched from NewsCLIPpings
 after the VisualNews image archive proved impractical to download reliably
 (see docs/DATASETS.md). Approved by Dr Olukanmi. Secondary, zero-training
 generalisation benchmark: **MMFakeBench**, unchanged.
@@ -47,7 +47,7 @@ pytest tests/ -q                 # sanity check (no GPU needed)
 
 Use `pip install -e ".[dev]"` instead if you also want Weights & Biases
 tracking (needs a working Go + Rust toolchain to build from source on
-platforms without a prebuilt wheel — this bit Intel Mac earlier).
+platforms without a prebuilt wheel - this bit Intel Mac earlier).
 
 GPU training uses 4-bit quantised LLaVA-1.5-7B + LoRA, which fits on a single
 24 GB GPU (RTX 3090/4090, A10G, L4). Colab Pro / Kaggle T4x2 works for
@@ -65,15 +65,15 @@ python scripts/prepare_cosmos.py --config configs/base.yaml
 ```
 
 This produces `cosmos_train.jsonl` / `cosmos_val.jsonl` (unlabeled,
-`{id, image_path, caption, source}` — for Stage 1 only) and a stratified
+`{id, image_path, caption, source}` - for Stage 1 only) and a stratified
 70/15/15 split of the ~1,700 labeled test images into
 `cosmos_labeled_train.jsonl` / `cosmos_labeled_val.jsonl` /
 `cosmos_labeled_test.jsonl` (labeled, `{id, image_path, caption1, caption2,
-label, source}` — note the two-caption shape, different from NewsCLIPpings/
+label, source}` - note the two-caption shape, different from NewsCLIPpings/
 MMFakeBench). Stage 2 trains on `cosmos_labeled_train.jsonl` only; baseline
 and full-system evaluation both use `cosmos_labeled_test.jsonl`, so their
 numbers stay comparable. **Only these ~1,700 images carry any label**, since
-COSMOS's own method is self-supervised — this caps Stage 2 fine-tuning and
+COSMOS's own method is self-supervised - this caps Stage 2 fine-tuning and
 evaluation data well below the 35,536 NewsCLIPpings originally provided;
 see docs/DATASETS.md for the full trade-off already discussed with Dr
 Olukanmi.
@@ -142,10 +142,10 @@ report are fully reproducible. Weights & Biases logging is on by default
 Baseline numbers from the literature, reported on **NewsCLIPpings**
 (CLIP ~66%, SNIFFER ~88.4% accuracy) and **MMFakeBench** zero-shot
 (strongest LVLMs ~50–60% F1, weakest ~25.7%) are **no longer a direct,
-apples-to-apples comparison** now that COSMOS is primary — those papers
+apples-to-apples comparison** now that COSMOS is primary - those papers
 don't report on COSMOS. Comparison strategy going forward: the ablation
 study (Section 3.5) becomes the primary evidence for each component's
 contribution, and COSMOS's own reported self-supervised numbers (Aneja et
 al., 2021) are the closest available external reference point on this
-dataset. Confirm this framing with Dr Olukanmi before writing up results.
+dataset. Confirmed this framing with Dr Olukanmi before writing up results.
 Log every reproduced number in `docs/EXPERIMENT_LOG.md` regardless.
