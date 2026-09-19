@@ -72,12 +72,32 @@ def _image_path(cosmos_dir: str | Path, img_local_path: str) -> str:
     return str(Path(cosmos_dir) / img_local_path.lstrip("./"))
 
 
+import re
+
+
+def _extract_entity_phrases(caption: str) -> list[str]:
+    """Consecutive capitalized words, e.g. 'Julian Castro' — same rough
+    heuristic used by scripts/diagnose_stage1_data.py, kept consistent so
+    frequency counts here match what that diagnostic reports."""
+    words = caption.split()
+    phrases = []
+    i = 0
+    while i < len(words) - 1:
+        if words[i][:1].isupper() and words[i + 1][:1].isupper():
+            phrases.append(re.sub(r"[.,;:]$", "", words[i] + " " + words[i + 1]))
+            i += 2
+        else:
+            i += 1
+    return phrases
+
+
 def prepare_unlabeled_split(
     cosmos_dir: str | Path,
     split: str,
     out_path: str | Path,
     max_samples: int | None = None,
     seed: int = 42,
+    min_entity_freq: int = 1,
 ) -> int:
     """train or val -> one record per (image, article caption). No labels.
 
@@ -89,6 +109,16 @@ def prepare_unlabeled_split(
     of raw records, almost all syndicated captions repeated verbatim
     across several articles about the same photo. A genuinely different
     caption for the same image is kept; only the exact repeat is waste.
+
+    min_entity_freq > 1 filters to captions containing at least one named
+    entity that appears at least that many times across the WHOLE split
+    (counted before the max_samples cap, not within the sampled subset).
+    Real data check found 44-74% of entities appear exactly once — no
+    amount of training teaches a one-shot face-to-name mapping, so a
+    uniform random sample mostly wastes budget on unlearnable examples.
+    Filtering first concentrates a fixed training budget on entities the
+    model has a real chance of learning from repeated exposure, at the
+    same total example count and GPU cost as an unfiltered sample.
     """
     if split not in ("train", "val"):
         raise ValueError("prepare_unlabeled_split is for 'train' or 'val' only")
@@ -99,6 +129,30 @@ def prepare_unlabeled_split(
             f"COSMOS {split}_data.json not found at {ann_path} (see docs/DATASETS.md)."
         )
     entries = _read_jsonl(ann_path)
+
+    if min_entity_freq > 1:
+        entity_counts: dict[str, int] = {}
+        for entry in entries:
+            for article in entry.get("articles", []):
+                for phrase in _extract_entity_phrases(article["caption"]):
+                    entity_counts[phrase] = entity_counts.get(phrase, 0) + 1
+
+        def _has_frequent_entity(caption: str) -> bool:
+            return any(
+                entity_counts.get(p, 0) >= min_entity_freq
+                for p in _extract_entity_phrases(caption)
+            )
+
+        before = len(entries)
+        entries = [
+            e for e in entries
+            if any(_has_frequent_entity(a["caption"]) for a in e.get("articles", []))
+        ]
+        log.info(
+            "COSMOS %s: min_entity_freq=%d kept %d/%d images with a "
+            "repeated-entity caption", split, min_entity_freq, len(entries), before,
+        )
+
     if max_samples is not None:
         import random
         random.Random(seed).shuffle(entries)
@@ -213,6 +267,7 @@ def prepare_all(
     out_dir: str | Path,
     max_samples: int | None = None,
     seed: int = 42,
+    min_entity_freq: int = 1,
 ) -> dict[str, int]:
     """Writes unlabeled Stage 1 splits, plus a stratified 70/15/15 split of
     the ~1,700 labeled test images into train/val/test for Stage 2 and
@@ -222,8 +277,14 @@ def prepare_all(
     """
     out_dir = Path(out_dir)
     counts = {
-        "train": prepare_unlabeled_split(cosmos_dir, "train", out_dir / "cosmos_train.jsonl", max_samples, seed=seed),
-        "val": prepare_unlabeled_split(cosmos_dir, "val", out_dir / "cosmos_val.jsonl", max_samples, seed=seed),
+        "train": prepare_unlabeled_split(
+            cosmos_dir, "train", out_dir / "cosmos_train.jsonl", max_samples,
+            seed=seed, min_entity_freq=min_entity_freq,
+        ),
+        "val": prepare_unlabeled_split(
+            cosmos_dir, "val", out_dir / "cosmos_val.jsonl", max_samples,
+            seed=seed, min_entity_freq=min_entity_freq,
+        ),
     }
 
     all_labeled = list(_load_test_records(cosmos_dir, max_samples))

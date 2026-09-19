@@ -12,7 +12,11 @@ def main():
     ap.add_argument("--config", default="configs/base.yaml")
     args = ap.parse_args()
     cfg = Config.from_yaml(args.config)
-    counts = prepare_all(cfg.cosmos_dir, cfg.data_dir, max_samples=cfg.max_samples)
+    counts = prepare_all(
+        cfg.cosmos_dir, cfg.data_dir,
+        max_samples=cfg.max_samples,
+        min_entity_freq=getattr(cfg, "min_entity_freq", 1),
+    )
     for split, n in counts.items():
         print(f"{split}: {n} records")
 
