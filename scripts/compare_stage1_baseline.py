@@ -37,11 +37,16 @@ def _looks_like_it_names_an_entity(caption: str) -> bool:
 
 def pick_examples(train_jsonl: Path, n: int) -> list[dict]:
     examples = []
+    seen_images = set()
     with open(train_jsonl, "r", encoding="utf-8") as f:
         for line in f:
             rec = json.loads(line)
+            if rec["image_path"] in seen_images:
+                continue  # same image can appear under several syndicated
+                          # captions in the raw data — one test case per image
             if _looks_like_it_names_an_entity(rec["caption"]):
                 examples.append(rec)
+                seen_images.add(rec["image_path"])
             if len(examples) >= n:
                 break
     return examples
