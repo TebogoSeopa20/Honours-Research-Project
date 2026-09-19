@@ -10,7 +10,8 @@ newsclippings_dir: data/newsclippings
 visualnews_dir: data/visualnews
 mmfakebench_dir: data/mmfakebench
 cosmos_dir: data/cosmos
-max_samples: null            # set e.g. 200 for smoke tests
+max_samples: 12000           # Stage 1 target size, tuned for GPU quota
+min_entity_freq: 3           # keep only images with a person named 3+ times elsewhere
 
 base_model: llava-hf/llava-1.5-7b-hf
 load_in_4bit: true
