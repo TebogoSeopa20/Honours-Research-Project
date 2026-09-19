@@ -10,6 +10,6 @@ batch_size: 4
 grad_accum: 4
 lr: 2.0e-4
 warmup_ratio: 0.03
-wandb: true
+wandb: false
 # Tip: start with max_samples: 5000 for a first pass, then scale up
 max_samples: null
