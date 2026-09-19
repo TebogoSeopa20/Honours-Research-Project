@@ -19,14 +19,19 @@ Output here is one unlabeled (image, caption) record per article, for
 Stage 1 news-domain entity-alignment tuning only (no OOC supervision needed).
 Schema: {"id", "image_path", "caption", "source"}
 
+Real data check (18,000 images, 360,758 raw records) found ~26% of these
+records are EXACT (image, caption) duplicates — the same syndicated wire
+caption appearing under several articles pointing at the same photo.
+prepare_unlabeled_split drops exact repeats while keeping every genuinely
+different caption for the same image, since that's real diversity worth
+keeping, not waste.
+
 test_data.json: one image with exactly TWO candidate captions (caption1,
 caption2) and a single label for whether pairing them with this image is
 out-of-context. This is a genuinely different task shape from
 NewsCLIPpings/MMFakeBench's one-image-one-caption schema — it is NOT
 flattened into two separate single-caption records here, since the label
-describes the pair, not either caption individually. Prompting/instruction
-code that consumes this needs a two-caption template, not the existing
-single-caption one.
+describes the pair, not either caption individually.
 Schema: {"id", "image_path", "caption1", "caption2", "label", "source"}
 label: 0 = not out-of-context, 1 = out-of-context.
 
@@ -79,6 +84,11 @@ def prepare_unlabeled_split(
     When max_samples caps the output, images are shuffled first (seeded,
     reproducible) so the subset is a random draw across the whole split,
     not just whichever images happen to come first in the annotation file.
+
+    Exact (image, caption) duplicates are dropped — confirmed to be ~26%
+    of raw records, almost all syndicated captions repeated verbatim
+    across several articles about the same photo. A genuinely different
+    caption for the same image is kept; only the exact repeat is waste.
     """
     if split not in ("train", "val"):
         raise ValueError("prepare_unlabeled_split is for 'train' or 'val' only")
@@ -94,11 +104,16 @@ def prepare_unlabeled_split(
         random.Random(seed).shuffle(entries)
 
     records = []
+    seen_pairs = set()
     for i, entry in enumerate(entries):
         image_path = _image_path(cosmos_dir, entry["img_local_path"])
         for j, article in enumerate(entry.get("articles", [])):
             if max_samples is not None and len(records) >= max_samples:
                 break
+            pair_key = (image_path, article["caption"])
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
             records.append(
                 {
                     "id": f"cosmos_{split}_{i}_{j}",
