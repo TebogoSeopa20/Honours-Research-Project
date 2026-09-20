@@ -1,0 +1,11 @@
+run_name: stage2_eval
+seed: 42
+base_model: llava-hf/llava-1.5-7b-hf
+load_in_4bit: true
+stage1_adapter: outputs/checkpoints/stage1_best_local
+stage2_adapter: outputs/checkpoints/stage2_best
+use_instruction_tuning: true
+use_retrieval: false
+use_reranking: false
+generate_explanations: true
+max_new_tokens: 320
