@@ -217,6 +217,16 @@ def _to_binary_label(raw) -> int:
 
 
 def _load_test_records(cosmos_dir: str | Path, max_samples: int | None = None) -> list[dict]:
+    """Loads COSMOS's labeled test_data.json.
+
+    A handful of entries reference images that don't actually exist in the
+    image archive — confirmed case: "test/231.jpg:small", a stray macOS
+    artifact file present in the ORIGINAL COSMOS release's images_test.zip,
+    which got legitimately excluded when that archive was rebuilt to fix a
+    forbidden-character upload error (see docs/DATASETS.md), but the
+    annotation file was never regenerated to match. Any record whose image
+    doesn't exist on disk is skipped here rather than crashing mid-training.
+    """
     ann_path = Path(cosmos_dir) / "test_data.json"
     if not ann_path.exists():
         raise FileNotFoundError(
@@ -225,9 +235,14 @@ def _load_test_records(cosmos_dir: str | Path, max_samples: int | None = None) -
     entries = _read_jsonl(ann_path)
 
     records = []
+    skipped_missing_image = 0
     for i, entry in enumerate(entries):
         if max_samples is not None and len(records) >= max_samples:
             break
+        image_path = _image_path(cosmos_dir, entry["img_local_path"])
+        if not Path(image_path).exists():
+            skipped_missing_image += 1
+            continue
         # Real field is "context_label", not "label" as originally assumed —
         # confirmed against actual downloaded data. Fallback to "label" kept
         # in case either name shows up across different COSMOS releases.
@@ -242,12 +257,17 @@ def _load_test_records(cosmos_dir: str | Path, max_samples: int | None = None) -
         records.append(
             {
                 "id": f"cosmos_test_{i}",
-                "image_path": _image_path(cosmos_dir, entry["img_local_path"]),
+                "image_path": image_path,
                 "caption1": entry["caption1"],
                 "caption2": entry["caption2"],
                 "label": _to_binary_label(label_raw),
                 "source": "cosmos",
             }
+        )
+    if skipped_missing_image:
+        log.info(
+            "COSMOS test: skipped %d records with missing image files "
+            "(known artifact, see docstring)", skipped_missing_image,
         )
     return records
 
