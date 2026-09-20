@@ -1,12 +1,12 @@
-run_name: stage2_ooc_finetune
+run_name: stage2_ooc_finetune_3ep
 seed: 42
 base_model: llava-hf/llava-1.5-7b-hf
 load_in_4bit: true
-stage1_adapter: outputs/checkpoints/stage1_best_local  # copy stage1-best-v2 here each session — see notes
+stage1_adapter: outputs/checkpoints/stage1_best_local
 lora_r: 16
 lora_alpha: 32
 lora_dropout: 0.05
-epochs: 1
+epochs: 3
 batch_size: 4
 grad_accum: 4
 lr: 1.0e-4
@@ -14,5 +14,4 @@ warmup_ratio: 0.03
 wandb: false
 max_samples: null
 save_every_steps: 20
-kaggle_checkpoint_dataset: tebogoseopa20/stage2-checkpoints
- 
+kaggle_checkpoint_dataset: tebogoseopa20/stage2-checkpoints-3ep

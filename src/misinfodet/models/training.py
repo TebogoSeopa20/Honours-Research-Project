@@ -17,13 +17,11 @@ log = get_logger(__name__)
 
 def _upload_checkpoint_to_kaggle(save_dir: Path, dataset_slug: str) -> None:
     """Push the current checkpoint to a Kaggle Dataset immediately, so a
-    session dying (hard 12h cap, wifi, browser crash — three different
-    causes have now lost three different runs) doesn't erase it. Never
+    session dying (hard 12h cap, wifi, browser crash — several different
+    causes have each lost a run this project) doesn't erase it. Never
     raises: a failed safety upload should not crash the actual training.
     """
     try:
-        # "version" updates an EXISTING dataset; only the first checkpoint
-        # needs "init" + "create" to establish it.
         result = subprocess.run(
             ["kaggle", "datasets", "version", "-p", str(save_dir), "-m", "checkpoint"],
             capture_output=True, text=True, timeout=300,
@@ -52,15 +50,14 @@ class InstructionDataset:
     def __init__(self, examples: list[dict]):
         self.examples = examples
 
-    def __len__(self) -> int:
+    def __len__(self):
         return len(self.examples)
 
-    def __getitem__(self, idx: int) -> dict:
+    def __getitem__(self, idx):
         return self.examples[idx]
 
 
 def make_collate_fn(processor):
-    """Collate examples into LLaVA inputs with prompt tokens masked out."""
     import torch
     from PIL import Image
 
@@ -80,11 +77,6 @@ def make_collate_fn(processor):
                 conversation, add_generation_prompt=True
             )
             full_texts.append(prompt_text + ex["target"] + tokenizer.eos_token)
-            # Real prompt length AFTER the processor expands the single
-            # <image> placeholder into its patch tokens (576 for LLaVA-1.5
-            # at 336px). Tokenizing prompt_text with the plain tokenizer
-            # would count <image> as one token and undercount by ~575,
-            # leaving image/prompt tokens in the loss.
             prompt_lens.append(
                 processor(images=image, text=prompt_text, return_tensors="pt")
                 ["input_ids"].shape[1]
@@ -105,9 +97,7 @@ def make_collate_fn(processor):
 
 
 def _eval_loss(model, loader, cfg: Config, max_batches: int = 50) -> float:
-    """Average loss over a capped number of held-out batches, no gradients.
-    Capped so eval doesn't itself become a meaningful chunk of the run time
-    on every checkpoint interval."""
+    """Average loss over a capped number of held-out batches, no gradients."""
     import torch
 
     model.eval()
@@ -191,8 +181,6 @@ def train(
                 # Periodic checkpoint — a multi-hour unattended run (session
                 # drop, accelerator change, timeout) loses only progress
                 # since the LAST of these, not everything back to step 0.
-                # Overwrites in place: LoRA adapters are small, and we only
-                # need the most recent one, not a history of all of them.
                 if cfg.save_every_steps and global_step % cfg.save_every_steps == 0:
                     model.save_pretrained(save_dir)
                     processor.save_pretrained(save_dir)
@@ -202,11 +190,10 @@ def train(
                     )
                     if cfg.kaggle_checkpoint_dataset:
                         _upload_checkpoint_to_kaggle(save_dir, cfg.kaggle_checkpoint_dataset)
-                    # Held-out loss at the same cadence as checkpoints. This
-                    # is the actual answer to "is more training still
-                    # helping" — training loss alone will keep dropping
-                    # regardless of whether the model is generalizing or
-                    # just memorizing the training subsample.
+                    # Held-out loss at the same cadence — the actual answer
+                    # to "is more training still helping," since training
+                    # loss alone keeps dropping regardless of whether the
+                    # model is generalizing or just memorizing.
                     if val_loader is not None:
                         vloss = _eval_loss(model, val_loader, cfg)
                         log.info(
@@ -221,6 +208,10 @@ def train(
                             best_dir = save_dir.parent / f"{save_dir.name}_best"
                             model.save_pretrained(best_dir)
                             processor.save_pretrained(best_dir)
+                            if cfg.kaggle_checkpoint_dataset:
+                                _upload_checkpoint_to_kaggle(
+                                    best_dir, f"{cfg.kaggle_checkpoint_dataset}-best"
+                                )
 
     model.save_pretrained(save_dir)
     processor.save_pretrained(save_dir)
