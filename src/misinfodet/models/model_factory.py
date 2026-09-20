@@ -107,3 +107,70 @@ def generate_text_only(model, processor, prompt: str, cfg: Config) -> str:
         )
     generated = output_ids[0][inputs["input_ids"].shape[1]:]
     return processor.tokenizer.decode(generated, skip_special_tokens=True).strip()
+
+
+def debug_verdict_tokenization(model, processor, image, prompt: str, cfg: Config) -> None:
+    """Run this FIRST, on one real example, before trusting calibration.
+
+    Prints how " consistent" and " out" actually tokenize for this model,
+    plus the top-5 real next-token predictions at the "VERDICT:" position.
+    The calibration technique only works if "consistent" and "out-of-context"
+    genuinely diverge at their very first token — this makes that a visible,
+    checkable fact instead of an assumption.
+    """
+    import torch
+
+    conversation = [
+        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]},
+    ]
+    prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
+    forced_text = prompt_text + "VERDICT:"
+
+    consistent_ids = processor.tokenizer(" consistent", add_special_tokens=False)["input_ids"]
+    ooc_ids = processor.tokenizer(" out-of-context", add_special_tokens=False)["input_ids"]
+    print(f'" consistent" tokenizes to: {consistent_ids} '
+          f'({[processor.tokenizer.decode([t]) for t in consistent_ids]})')
+    print(f'" out-of-context" tokenizes to: {ooc_ids} '
+          f'({[processor.tokenizer.decode([t]) for t in ooc_ids]})')
+    if consistent_ids[0] == ooc_ids[0]:
+        print("WARNING: both start with the SAME token id — the technique as "
+              "written won't distinguish them. Needs a different anchor point.")
+    else:
+        print("OK: distinct first tokens — the technique can distinguish them.")
+
+    inputs = processor(images=image, text=forced_text, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    next_token_logits = outputs.logits[0, -1, :]
+    top5 = torch.topk(next_token_logits, 5)
+    print("\nTop-5 real next-token predictions right after 'VERDICT:':")
+    for logit, idx in zip(top5.values.tolist(), top5.indices.tolist()):
+        print(f"  {processor.tokenizer.decode([idx])!r}  (logit={logit:.2f})")
+
+
+def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> float:
+    """Returns P(out-of-context) as a continuous score in [0, 1], via one
+    forward pass rather than full text generation — the model's ACTUAL
+    confidence at the token position right after "VERDICT:", not just
+    whichever word it happens to generate first.
+
+    Run debug_verdict_tokenization() once first to confirm the tokenization
+    assumption holds for your model before trusting this for calibration.
+    """
+    import torch
+
+    conversation = [
+        {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]},
+    ]
+    prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
+    forced_text = prompt_text + "VERDICT:"
+
+    consistent_id = processor.tokenizer(" consistent", add_special_tokens=False)["input_ids"][0]
+    ooc_id = processor.tokenizer(" out-of-context", add_special_tokens=False)["input_ids"][0]
+
+    inputs = processor(images=image, text=forced_text, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    next_token_logits = outputs.logits[0, -1, :]
+    probs = torch.softmax(next_token_logits[[consistent_id, ooc_id]], dim=0)
+    return probs[1].item()  # P(out-of-context), normalized against P(consistent)
