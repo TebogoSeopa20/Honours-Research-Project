@@ -160,17 +160,17 @@ def _bucket_probs(next_token_logits, tokenizer, top_k: int = 200) -> tuple[float
 
 
 def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> float:
-    """Returns P(out-of-context) as a continuous score in [0, 1], via one
-    forward pass rather than full text generation.
+    """Returns P(out-of-context) as a continuous score in [0, 1].
 
-    IMPORTANT: earlier versions of this function forced the prompt to end
-    in "VERDICT:" and read the next token, assuming the model continues
-    the literal training-target format ("VERDICT: consistent"). Confirmed
-    against real generation that this is WRONG — the model's actual free
-    output is just the bare verdict word itself ('Out-of-context',
-    'Consistent.', no "VERDICT:" prefix at all). This version scores the
-    genuinely first generated token, with NO forced prefix, matching what
-    the model actually produces.
+    CORRECTED AGAIN: confirmed via diagnostic (25 real examples) that the
+    model's actual behavior is MIXED — some outputs jump straight to the
+    verdict word, but 20% first generate "VERDICT:" before it. A single
+    forward pass checking only the very first token misses that 20%
+    entirely. This version does a real short generation (cheap — 10
+    tokens, not the full 320) and scans the ACTUAL generated tokens for
+    wherever the real class decision happens, using the same greedy
+    decoding mechanism as real generation, so it can't systematically
+    diverge from it the way a single-forward-pass guess can.
     """
     import torch
 
@@ -178,10 +178,18 @@ def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> floa
         {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]},
     ]
     prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
-
     inputs = processor(images=image, text=prompt_text, return_tensors="pt").to(model.device)
+
     with torch.no_grad():
-        outputs = model(**inputs)
-    next_token_logits = outputs.logits[0, -1, :]
-    p_out, p_consistent = _bucket_probs(next_token_logits, processor.tokenizer)
-    return p_out / (p_out + p_consistent + 1e-9)
+        gen_out = model.generate(
+            **inputs, max_new_tokens=10, do_sample=False,
+            return_dict_in_generate=True, output_scores=True,
+        )
+
+    for step_logits in gen_out.scores:
+        token_id = int(step_logits[0].argmax())
+        text = processor.tokenizer.decode([token_id]).strip().lower()
+        if text.startswith("out") or text.startswith("cons"):
+            p_out, p_consistent = _bucket_probs(step_logits[0], processor.tokenizer)
+            return p_out / (p_out + p_consistent + 1e-9)
+    return 0.5  # no clear decision token found in the first 10 — neutral fallback
