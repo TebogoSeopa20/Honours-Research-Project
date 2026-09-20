@@ -112,13 +112,11 @@ def generate_text_only(model, processor, prompt: str, cfg: Config) -> str:
 def debug_verdict_tokenization(model, processor, image, prompt: str, cfg: Config) -> None:
     """Run this FIRST, on one real example, before trusting calibration.
 
-    Confirmed against real output: a naive single-token comparison breaks
-    two ways — (1) " consistent" and " out-of-context" share a leading
-    tokenizer artifact token, and (2) the model's real outputs vary in
-    capitalization (Out/out/OUT all observed), not just one fixed form.
-    get_verdict_score() below sums probability across every vocabulary
-    token starting with "out" vs "cons" (case-insensitive) instead of
-    comparing two fixed token ids, to be robust to both.
+    CORRECTED: earlier version forced "VERDICT:" as a prefix, assuming the
+    model continues the literal training-target text. Confirmed against
+    real generation that this is wrong — actual outputs are bare verdict
+    words ('Out-of-context', 'Consistent.') with no "VERDICT:" prefix at
+    all. This checks the genuinely first free-generation token instead.
     """
     import torch
 
@@ -126,14 +124,13 @@ def debug_verdict_tokenization(model, processor, image, prompt: str, cfg: Config
         {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]},
     ]
     prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
-    forced_text = prompt_text + "VERDICT:"
 
-    inputs = processor(images=image, text=forced_text, return_tensors="pt").to(model.device)
+    inputs = processor(images=image, text=prompt_text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         outputs = model(**inputs)
     next_token_logits = outputs.logits[0, -1, :]
     top5 = torch.topk(next_token_logits, 5)
-    print("Top-5 real next-token predictions right after 'VERDICT:':")
+    print("Top-5 real FIRST-token predictions (no forced prefix):")
     for logit, idx in zip(top5.values.tolist(), top5.indices.tolist()):
         print(f"  {processor.tokenizer.decode([idx])!r}  (logit={logit:.2f})")
 
@@ -164,12 +161,16 @@ def _bucket_probs(next_token_logits, tokenizer, top_k: int = 200) -> tuple[float
 
 def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> float:
     """Returns P(out-of-context) as a continuous score in [0, 1], via one
-    forward pass rather than full text generation. Sums probability across
-    every "out"-starting vs "cons"-starting token among the top candidates,
-    rather than comparing two fixed token ids — confirmed necessary since
-    the model's real outputs vary in capitalization (Out/out/OUT), and a
-    naive single-token comparison shares a tokenizer artifact token between
-    the two classes (see debug_verdict_tokenization).
+    forward pass rather than full text generation.
+
+    IMPORTANT: earlier versions of this function forced the prompt to end
+    in "VERDICT:" and read the next token, assuming the model continues
+    the literal training-target format ("VERDICT: consistent"). Confirmed
+    against real generation that this is WRONG — the model's actual free
+    output is just the bare verdict word itself ('Out-of-context',
+    'Consistent.', no "VERDICT:" prefix at all). This version scores the
+    genuinely first generated token, with NO forced prefix, matching what
+    the model actually produces.
     """
     import torch
 
@@ -177,9 +178,8 @@ def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> floa
         {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]},
     ]
     prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
-    forced_text = prompt_text + "VERDICT:"
 
-    inputs = processor(images=image, text=forced_text, return_tensors="pt").to(model.device)
+    inputs = processor(images=image, text=prompt_text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         outputs = model(**inputs)
     next_token_logits = outputs.logits[0, -1, :]
