@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-"""Phase 4: Stage 2 out-of-context detection fine-tuning (loads Stage 1)."""
 import argparse
 from pathlib import Path
 
@@ -23,12 +22,22 @@ def main():
     examples = list(build_stage2_examples_paired(records))
     if cfg.max_samples:
         examples = examples[: cfg.max_samples]
-    print(f"Stage 2: {len(examples)} OOC detection examples")
+    print(f"Stage 2: {len(examples)} OOC fine-tuning examples")
+
+    # Held out from the same small labeled pool, never trained on — same
+    # val_loss safety net that caught Stage 1 overfitting and identified
+    # its actual best checkpoint rather than just using whatever finished last.
+    val_examples = None
+    val_path = Path(cfg.data_dir) / "cosmos_labeled_val.jsonl"
+    if val_path.exists():
+        val_records = read_jsonl(val_path)
+        val_examples = list(build_stage2_examples_paired(val_records))
+        print(f"Stage 2: {len(val_examples)} held-out validation examples")
 
     save_dir = Path(cfg.output_dir) / "checkpoints" / "stage2"
     write_run_meta(cfg, save_dir)
-    model, processor = load_llava(cfg, trainable=True)  # cfg.stage1_adapter applied inside
-    train(model, processor, examples, cfg, save_dir)
+    model, processor = load_llava(cfg, trainable=True)
+    train(model, processor, examples, cfg, save_dir, val_examples=val_examples)
 
 
 if __name__ == "__main__":
