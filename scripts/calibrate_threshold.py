@@ -28,14 +28,25 @@ from misinfodet.pipeline.prompts import PAIRED_VERDICT_PROMPT
 from misinfodet.utils import Config, read_jsonl
 
 
-def score_dataset(model, processor, records, cfg):
-    """Returns [(score, gold_label), ...] — score = P(out-of-context)."""
+def score_dataset(model, processor, records, cfg, label: str = ""):
+    """Returns [(score, gold_label), ...] — score = P(out-of-context).
+
+    Frees GPU memory every 20 examples and prints progress — a silent
+    OOM crash partway through 500+ forward passes (confirmed: process
+    disappeared entirely, no traceback, GPU memory back to 0MiB) is the
+    real failure mode here, not a slow-but-alive computation.
+    """
+    import torch
+
     results = []
-    for rec in records:
+    for i, rec in enumerate(records):
         image = Image.open(rec["image_path"]).convert("RGB")
         prompt = PAIRED_VERDICT_PROMPT.format(caption1=rec["caption1"], caption2=rec["caption2"])
         score = get_verdict_score(model, processor, image, prompt, cfg)
         results.append((score, rec["label"]))
+        if (i + 1) % 20 == 0:
+            torch.cuda.empty_cache()
+            print(f"  {label}{i + 1}/{len(records)} done")
     return results
 
 
@@ -103,14 +114,14 @@ def main():
     test_records = read_jsonl(Path(cfg.data_dir) / "cosmos_labeled_test.jsonl")
 
     print(f"Scoring {len(val_records)} validation examples...")
-    val_scored = score_dataset(model, processor, val_records, cfg)
+    val_scored = score_dataset(model, processor, val_records, cfg, label="val ")
     report(val_scored, 0.5, "Validation @ default 0.5 threshold")
 
     best_t, best_f1 = find_best_threshold(val_scored)
     print(f"\n>>> Best threshold found on validation: {best_t:.2f} (val macro_f1={best_f1:.4f})")
 
     print(f"\nScoring {len(test_records)} test examples...")
-    test_scored = score_dataset(model, processor, test_records, cfg)
+    test_scored = score_dataset(model, processor, test_records, cfg, label="test ")
     report(test_scored, 0.5, "TEST @ default 0.5 (uncalibrated)")
     report(test_scored, best_t, f"TEST @ calibrated threshold {best_t:.2f}")
 
