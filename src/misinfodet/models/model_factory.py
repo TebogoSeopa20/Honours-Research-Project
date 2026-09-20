@@ -112,11 +112,13 @@ def generate_text_only(model, processor, prompt: str, cfg: Config) -> str:
 def debug_verdict_tokenization(model, processor, image, prompt: str, cfg: Config) -> None:
     """Run this FIRST, on one real example, before trusting calibration.
 
-    Prints how " consistent" and " out" actually tokenize for this model,
-    plus the top-5 real next-token predictions at the "VERDICT:" position.
-    The calibration technique only works if "consistent" and "out-of-context"
-    genuinely diverge at their very first token — this makes that a visible,
-    checkable fact instead of an assumption.
+    Confirmed against real output: a naive single-token comparison breaks
+    two ways — (1) " consistent" and " out-of-context" share a leading
+    tokenizer artifact token, and (2) the model's real outputs vary in
+    capitalization (Out/out/OUT all observed), not just one fixed form.
+    get_verdict_score() below sums probability across every vocabulary
+    token starting with "out" vs "cons" (case-insensitive) instead of
+    comparing two fixed token ids, to be robust to both.
     """
     import torch
 
@@ -125,37 +127,49 @@ def debug_verdict_tokenization(model, processor, image, prompt: str, cfg: Config
     ]
     prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
     forced_text = prompt_text + "VERDICT:"
-
-    consistent_ids = processor.tokenizer(" consistent", add_special_tokens=False)["input_ids"]
-    ooc_ids = processor.tokenizer(" out-of-context", add_special_tokens=False)["input_ids"]
-    print(f'" consistent" tokenizes to: {consistent_ids} '
-          f'({[processor.tokenizer.decode([t]) for t in consistent_ids]})')
-    print(f'" out-of-context" tokenizes to: {ooc_ids} '
-          f'({[processor.tokenizer.decode([t]) for t in ooc_ids]})')
-    if consistent_ids[0] == ooc_ids[0]:
-        print("WARNING: both start with the SAME token id — the technique as "
-              "written won't distinguish them. Needs a different anchor point.")
-    else:
-        print("OK: distinct first tokens — the technique can distinguish them.")
 
     inputs = processor(images=image, text=forced_text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         outputs = model(**inputs)
     next_token_logits = outputs.logits[0, -1, :]
     top5 = torch.topk(next_token_logits, 5)
-    print("\nTop-5 real next-token predictions right after 'VERDICT:':")
+    print("Top-5 real next-token predictions right after 'VERDICT:':")
     for logit, idx in zip(top5.values.tolist(), top5.indices.tolist()):
         print(f"  {processor.tokenizer.decode([idx])!r}  (logit={logit:.2f})")
+
+    p_out, p_consistent = _bucket_probs(next_token_logits, processor.tokenizer)
+    print(f"\nSummed P(out-of-context)={p_out:.4f}  P(consistent)={p_consistent:.4f}  "
+          f"(normalized score={p_out / (p_out + p_consistent + 1e-9):.4f})")
+
+
+def _bucket_probs(next_token_logits, tokenizer, top_k: int = 200) -> tuple[float, float]:
+    """Sums softmax probability across the top_k most likely next tokens,
+    bucketed by whether their decoded text (stripped, lowercased) starts
+    with "out" or "cons" — robust to both capitalization variance and
+    tokenizer-specific leading-space artifacts, unlike comparing two fixed
+    token ids directly (confirmed necessary against real model output)."""
+    import torch
+
+    top = torch.topk(next_token_logits, top_k)
+    probs = torch.softmax(top.values, dim=0)
+    p_out, p_consistent = 0.0, 0.0
+    for prob, idx in zip(probs.tolist(), top.indices.tolist()):
+        text = tokenizer.decode([idx]).strip().lower()
+        if text.startswith("out"):
+            p_out += prob
+        elif text.startswith("cons"):
+            p_consistent += prob
+    return p_out, p_consistent
 
 
 def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> float:
     """Returns P(out-of-context) as a continuous score in [0, 1], via one
-    forward pass rather than full text generation — the model's ACTUAL
-    confidence at the token position right after "VERDICT:", not just
-    whichever word it happens to generate first.
-
-    Run debug_verdict_tokenization() once first to confirm the tokenization
-    assumption holds for your model before trusting this for calibration.
+    forward pass rather than full text generation. Sums probability across
+    every "out"-starting vs "cons"-starting token among the top candidates,
+    rather than comparing two fixed token ids — confirmed necessary since
+    the model's real outputs vary in capitalization (Out/out/OUT), and a
+    naive single-token comparison shares a tokenizer artifact token between
+    the two classes (see debug_verdict_tokenization).
     """
     import torch
 
@@ -165,12 +179,9 @@ def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> floa
     prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
     forced_text = prompt_text + "VERDICT:"
 
-    consistent_id = processor.tokenizer(" consistent", add_special_tokens=False)["input_ids"][0]
-    ooc_id = processor.tokenizer(" out-of-context", add_special_tokens=False)["input_ids"][0]
-
     inputs = processor(images=image, text=forced_text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         outputs = model(**inputs)
     next_token_logits = outputs.logits[0, -1, :]
-    probs = torch.softmax(next_token_logits[[consistent_id, ooc_id]], dim=0)
-    return probs[1].item()  # P(out-of-context), normalized against P(consistent)
+    p_out, p_consistent = _bucket_probs(next_token_logits, processor.tokenizer)
+    return p_out / (p_out + p_consistent + 1e-9)
