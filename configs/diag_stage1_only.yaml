@@ -1,0 +1,15 @@
+run_name: diag_stage1_only
+seed: 42
+base_model: llava-hf/llava-1.5-7b-hf
+load_in_4bit: true
+stage1_adapter: outputs/checkpoints/stage1_best_local
+stage2_adapter: ""
+use_instruction_tuning: true
+use_retrieval: true
+use_reranking: true
+generate_explanations: true
+max_new_tokens: 320
+retrieval_top_k: 8
+rerank_keep_k: 3
+search_provider: serper
+search_api_key_env: SEARCH_API_KEY
