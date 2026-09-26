@@ -68,8 +68,14 @@ def load_llava(cfg: Config, trainable: bool = False):
             model = PeftModel.from_pretrained(model, adapter)
 
     if not trainable:
-        while isinstance(model, PeftModel):
-            model = model.merge_and_unload()
+        # merge_adapter() merges every nested adapter's LoRA deltas into its
+        # base layer IN PLACE, without unloading/removing the PeftModel
+        # wrapper. merge_and_unload() (unload + remove) was tried first but
+        # crashes on a doubly-nested PeftModel: it ends by deleting the
+        # inner model's `peft_config`, which is a property with no deleter.
+        # merge_adapter() walks every submodule regardless of nesting depth,
+        # so one call merges both stage1 and stage2 in a single pass.
+        model.merge_adapter()
 
     if trainable:
         from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
