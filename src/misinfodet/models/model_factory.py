@@ -54,11 +54,22 @@ def load_llava(cfg: Config, trainable: bool = False):
 
     from peft import PeftModel
 
+    # Attach every configured prior-stage adapter FIRST, unmerged, in order —
+    # this matches how stage2 was actually trained (on top of an unmerged
+    # stage1, since the training branch below never merges before attaching
+    # the trainable adapter). Merging stage1 before attaching stage2 (the old
+    # code) changes stage2's expected parameter key-prefixes, so PEFT can't
+    # find its saved weights, silently zero-inits them, and stage2 becomes a
+    # no-op at inference. Confirmed via a stage1-only diagnostic run
+    # producing byte-identical output to the stage1+stage2 run.
     for name, adapter in (("stage1", cfg.stage1_adapter), ("stage2", cfg.stage2_adapter)):
         if adapter:
             log.info("Applying %s adapter from %s", name, adapter)
             model = PeftModel.from_pretrained(model, adapter)
-            model = model.merge_and_unload() if not trainable else model
+
+    if not trainable:
+        while isinstance(model, PeftModel):
+            model = model.merge_and_unload()
 
     if trainable:
         from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
