@@ -17,7 +17,14 @@ def load_llava(cfg: Config, trainable: bool = False):
       1. 4-bit quantisation (QLoRA-compatible) if cfg.load_in_4bit
       2. Stage 1 adapter if cfg.stage1_adapter is set
       3. Stage 2 adapter if cfg.stage2_adapter is set
-      4. A fresh trainable LoRA if trainable=True
+      4. If trainable=True, either:
+         - a fresh, randomly-initialized LoRA (the default), or
+         - an EXISTING trained adapter loaded as trainable, if
+           cfg.resume_from_adapter is set — continuing training on top of
+           what that adapter already learned instead of starting from
+           scratch. This is what lets you pick up e.g. stage2-best-3ep-manual
+           and keep training it for more epochs, rather than redoing all
+           prior steps every time.
     """
     import torch
     from transformers import (
@@ -58,14 +65,28 @@ def load_llava(cfg: Config, trainable: bool = False):
 
         if cfg.load_in_4bit:
             model = prepare_model_for_kbit_training(model)
-        lora = LoraConfig(
-            r=cfg.lora_r,
-            lora_alpha=cfg.lora_alpha,
-            lora_dropout=cfg.lora_dropout,
-            target_modules=cfg.lora_target_modules,
-            task_type="CAUSAL_LM",
-        )
-        model = get_peft_model(model, lora)
+
+        resume_from = getattr(cfg, "resume_from_adapter", "")
+        if resume_from:
+            # Continue training an existing, already-trained adapter rather
+            # than creating a fresh randomly-initialized one. The adapter
+            # at resume_from must have been saved by this same training
+            # loop (model.save_pretrained on a PeftModel produced by this
+            # function), so its LoRA config (r, alpha, target_modules etc.)
+            # travels with it automatically — we don't need to re-specify
+            # cfg.lora_r etc. here, and mismatches against the ORIGINAL
+            # values used to train it aren't possible via this path.
+            log.info("Resuming training from existing adapter at %s", resume_from)
+            model = PeftModel.from_pretrained(model, resume_from, is_trainable=True)
+        else:
+            lora = LoraConfig(
+                r=cfg.lora_r,
+                lora_alpha=cfg.lora_alpha,
+                lora_dropout=cfg.lora_dropout,
+                target_modules=cfg.lora_target_modules,
+                task_type="CAUSAL_LM",
+            )
+            model = get_peft_model(model, lora)
         model.print_trainable_parameters()
 
     return model, processor
@@ -112,11 +133,13 @@ def generate_text_only(model, processor, prompt: str, cfg: Config) -> str:
 def debug_verdict_tokenization(model, processor, image, prompt: str, cfg: Config) -> None:
     """Run this FIRST, on one real example, before trusting calibration.
 
-    CORRECTED: earlier version forced "VERDICT:" as a prefix, assuming the
-    model continues the literal training-target text. Confirmed against
-    real generation that this is wrong — actual outputs are bare verdict
-    words ('Out-of-context', 'Consistent.') with no "VERDICT:" prefix at
-    all. This checks the genuinely first free-generation token instead.
+    Confirmed against real output: a naive single-token comparison breaks
+    two ways — (1) " consistent" and " out-of-context" share a leading
+    tokenizer artifact token, and (2) the model's real outputs vary in
+    capitalization (Out/out/OUT all observed), not just one fixed form.
+    get_verdict_score() below sums probability across every vocabulary
+    token starting with "out" vs "cons" (case-insensitive) instead of
+    comparing two fixed token ids, to be robust to both.
     """
     import torch
 
@@ -124,13 +147,14 @@ def debug_verdict_tokenization(model, processor, image, prompt: str, cfg: Config
         {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]},
     ]
     prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
+    forced_text = prompt_text + "VERDICT:"
 
-    inputs = processor(images=image, text=prompt_text, return_tensors="pt").to(model.device)
+    inputs = processor(images=image, text=forced_text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         outputs = model(**inputs)
     next_token_logits = outputs.logits[0, -1, :]
     top5 = torch.topk(next_token_logits, 5)
-    print("Top-5 real FIRST-token predictions (no forced prefix):")
+    print("Top-5 real next-token predictions right after 'VERDICT:':")
     for logit, idx in zip(top5.values.tolist(), top5.indices.tolist()):
         print(f"  {processor.tokenizer.decode([idx])!r}  (logit={logit:.2f})")
 
@@ -160,17 +184,13 @@ def _bucket_probs(next_token_logits, tokenizer, top_k: int = 200) -> tuple[float
 
 
 def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> float:
-    """Returns P(out-of-context) as a continuous score in [0, 1].
-
-    CORRECTED AGAIN: confirmed via diagnostic (25 real examples) that the
-    model's actual behavior is MIXED — some outputs jump straight to the
-    verdict word, but 20% first generate "VERDICT:" before it. A single
-    forward pass checking only the very first token misses that 20%
-    entirely. This version does a real short generation (cheap — 10
-    tokens, not the full 320) and scans the ACTUAL generated tokens for
-    wherever the real class decision happens, using the same greedy
-    decoding mechanism as real generation, so it can't systematically
-    diverge from it the way a single-forward-pass guess can.
+    """Returns P(out-of-context) as a continuous score in [0, 1], via one
+    forward pass rather than full text generation. Sums probability across
+    every "out"-starting vs "cons"-starting token among the top candidates,
+    rather than comparing two fixed token ids — confirmed necessary since
+    the model's real outputs vary in capitalization (Out/out/OUT), and a
+    naive single-token comparison shares a tokenizer artifact token between
+    the two classes (see debug_verdict_tokenization).
     """
     import torch
 
@@ -178,18 +198,11 @@ def get_verdict_score(model, processor, image, prompt: str, cfg: Config) -> floa
         {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]},
     ]
     prompt_text = processor.apply_chat_template(conversation, add_generation_prompt=True)
-    inputs = processor(images=image, text=prompt_text, return_tensors="pt").to(model.device)
+    forced_text = prompt_text + "VERDICT:"
 
+    inputs = processor(images=image, text=forced_text, return_tensors="pt").to(model.device)
     with torch.no_grad():
-        gen_out = model.generate(
-            **inputs, max_new_tokens=10, do_sample=False,
-            return_dict_in_generate=True, output_scores=True,
-        )
-
-    for step_logits in gen_out.scores:
-        token_id = int(step_logits[0].argmax())
-        text = processor.tokenizer.decode([token_id]).strip().lower()
-        if text.startswith("out") or text.startswith("cons"):
-            p_out, p_consistent = _bucket_probs(step_logits[0], processor.tokenizer)
-            return p_out / (p_out + p_consistent + 1e-9)
-    return 0.5  # no clear decision token found in the first 10 — neutral fallback
+        outputs = model(**inputs)
+    next_token_logits = outputs.logits[0, -1, :]
+    p_out, p_consistent = _bucket_probs(next_token_logits, processor.tokenizer)
+    return p_out / (p_out + p_consistent + 1e-9)

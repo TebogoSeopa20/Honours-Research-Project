@@ -34,6 +34,17 @@ def main():
         val_examples = list(build_stage2_examples_paired(val_records))
         print(f"Stage 2: {len(val_examples)} held-out validation examples")
 
+    resume_from = getattr(cfg, "resume_from_adapter", "")
+    if resume_from:
+        # Continuing an already-trained adapter (e.g. stage2-best-3ep-manual)
+        # for more epochs, per the supervisor's guidance to keep training
+        # rather than restart from Stage 1 each time. cfg.epochs here is
+        # the number of ADDITIONAL epochs to run on top of it, not a total.
+        print(f"Stage 2: RESUMING training from existing adapter: {resume_from}")
+        print(f"Stage 2: running {cfg.epochs} additional epoch(s) on top of it")
+    else:
+        print("Stage 2: starting training with a fresh, randomly-initialized LoRA adapter")
+
     save_dir = Path(cfg.output_dir) / "checkpoints" / "stage2"
     write_run_meta(cfg, save_dir)
     model, processor = load_llava(cfg, trainable=True)

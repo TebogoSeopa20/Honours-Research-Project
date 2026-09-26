@@ -45,6 +45,7 @@ class Config:
     load_in_4bit: bool = True
     stage1_adapter: str | None = None
     stage2_adapter: str | None = None
+    resume_from_adapter: str | None = None  # existing trained Stage 2 adapter to continue training
     max_new_tokens: int = 256
     temperature: float = 0.0
 
