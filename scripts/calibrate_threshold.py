@@ -13,6 +13,8 @@ configuration tested so far without any further training.
 IMPORTANT: run with --debug first, on one example, to confirm the
 tokenization assumption this relies on actually holds for this model,
 before trusting a full calibration run.
+
+--blank-image replaces every image with plain grey (text-only ablation).
 """
 import argparse
 from pathlib import Path
@@ -27,8 +29,10 @@ from misinfodet.models.model_factory import (
 from misinfodet.pipeline.prompts import PAIRED_VERDICT_PROMPT
 from misinfodet.utils import Config, read_jsonl
 
+BLANK = Image.new("RGB", (336, 336), (128, 128, 128))
 
-def score_dataset(model, processor, records, cfg, label: str = ""):
+
+def score_dataset(model, processor, records, cfg, label: str = "", blank: bool = False):
     """Returns [(score, gold_label), ...] — score = P(out-of-context).
 
     Frees GPU memory every 20 examples and prints progress — a silent
@@ -40,7 +44,7 @@ def score_dataset(model, processor, records, cfg, label: str = ""):
 
     results = []
     for i, rec in enumerate(records):
-        image = Image.open(rec["image_path"]).convert("RGB")
+        image = BLANK if blank else Image.open(rec["image_path"]).convert("RGB")
         prompt = PAIRED_VERDICT_PROMPT.format(caption1=rec["caption1"], caption2=rec["caption2"])
         score = get_verdict_score(model, processor, image, prompt, cfg)
         results.append((score, rec["label"]))
@@ -91,11 +95,19 @@ def report(scored, threshold, label):
     print(f"confusion_matrix (rows=gold, cols=pred): {cm}")
 
 
+def auroc(scored):
+    from sklearn.metrics import roc_auc_score
+
+    return roc_auc_score([g for _, g in scored], [s for s, _ in scored])
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--debug", action="store_true",
                     help="run tokenization sanity check on 1 example, then exit")
+    ap.add_argument("--blank-image", action="store_true",
+                    help="replace every image with plain grey (text-only ablation)")
     args = ap.parse_args()
     cfg = Config.from_yaml(args.config)
 
@@ -110,18 +122,22 @@ def main():
         debug_verdict_tokenization(model, processor, image, prompt, cfg)
         return
 
+    if args.blank_image:
+        print(">>> BLANK-IMAGE ABLATION: every image replaced with plain grey")
+
     val_records = read_jsonl(Path(cfg.data_dir) / "cosmos_labeled_val.jsonl")
     test_records = read_jsonl(Path(cfg.data_dir) / "cosmos_labeled_test.jsonl")
 
     print(f"Scoring {len(val_records)} validation examples...")
-    val_scored = score_dataset(model, processor, val_records, cfg, label="val ")
+    val_scored = score_dataset(model, processor, val_records, cfg, label="val ", blank=args.blank_image)
     report(val_scored, 0.5, "Validation @ default 0.5 threshold")
 
     best_t, best_f1 = find_best_threshold(val_scored)
     print(f"\n>>> Best threshold found on validation: {best_t:.2f} (val macro_f1={best_f1:.4f})")
 
     print(f"\nScoring {len(test_records)} test examples...")
-    test_scored = score_dataset(model, processor, test_records, cfg, label="test ")
+    test_scored = score_dataset(model, processor, test_records, cfg, label="test ", blank=args.blank_image)
+    print(f"\nTEST AUROC (threshold-free): {auroc(test_scored):.4f}")
     report(test_scored, 0.5, "TEST @ default 0.5 (uncalibrated)")
     report(test_scored, best_t, f"TEST @ calibrated threshold {best_t:.2f}")
 

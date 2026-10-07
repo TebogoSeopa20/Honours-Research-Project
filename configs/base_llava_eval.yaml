@@ -1,0 +1,8 @@
+run_name: base_llava_eval
+seed: 42
+base_model: llava-hf/llava-1.5-7b-hf
+load_in_4bit: true
+stage1_adapter: null
+stage2_adapter: null
+wandb: false
+max_samples: null

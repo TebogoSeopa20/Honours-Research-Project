@@ -17,6 +17,8 @@ from misinfodet.models.model_factory import get_verdict_score, load_llava
 from misinfodet.pipeline.prompts import VERDICT_PROMPT
 from misinfodet.utils import Config, read_jsonl
 
+BLANK = Image.new("RGB", (336, 336), (128, 128, 128))
+
 
 def stratified_sample(records, n, seed):
     by_type = defaultdict(list)
@@ -35,7 +37,7 @@ def stratified_sample(records, n, seed):
     return calib, evals
 
 
-def score_all(model, processor, records, cfg, out_path):
+def score_all(model, processor, records, cfg, out_path, blank=False):
     import torch
 
     done = {}
@@ -47,7 +49,7 @@ def score_all(model, processor, records, cfg, out_path):
     t0 = time.time()
     with open(out_path, "a", encoding="utf-8") as f:
         for i, rec in enumerate(todo):
-            image = Image.open(rec["image_path"]).convert("RGB")
+            image = BLANK if blank else Image.open(rec["image_path"]).convert("RGB")
             prompt = VERDICT_PROMPT.format(caption=rec["caption"])
             score = get_verdict_score(model, processor, image, prompt, cfg)
             done[rec["id"]] = score
@@ -88,6 +90,7 @@ def main():
     ap.add_argument("--n", type=int, default=2000)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--cosmos-threshold", type=float, default=0.85)
+    ap.add_argument("--blank-image", action="store_true", help="replace every image with plain grey (text-only ablation)")
     args = ap.parse_args()
     cfg = Config.from_yaml(args.config)
 
@@ -95,12 +98,12 @@ def main():
     calib, evals = stratified_sample(records, args.n, args.seed)
     print(f"Sample: {len(calib)} calibration + {len(evals)} evaluation")
 
-    out_path = Path(cfg.output_dir) / "predictions" / f"{cfg.run_name}_mmfakebench_scores.jsonl"
+    out_path = Path(cfg.output_dir) / "predictions" / f"{cfg.run_name}_mmfakebench{'_blank' if args.blank_image else ''}_scores.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     print("Loading model...")
     model, processor = load_llava(cfg, trainable=False)
-    scores = score_all(model, processor, calib + evals, cfg, out_path)
+    scores = score_all(model, processor, calib + evals, cfg, out_path, args.blank_image)
 
     calib_scored = [(scores[r["id"]], r["label"]) for r in calib]
     eval_scored = [(scores[r["id"]], r["label"]) for r in evals]
