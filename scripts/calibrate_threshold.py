@@ -17,6 +17,7 @@ before trusting a full calibration run.
 --blank-image replaces every image with plain grey (text-only ablation).
 """
 import argparse
+import json
 from pathlib import Path
 
 from PIL import Image
@@ -140,6 +141,14 @@ def main():
     print(f"\nTEST AUROC (threshold-free): {auroc(test_scored):.4f}")
     report(test_scored, 0.5, "TEST @ default 0.5 (uncalibrated)")
     report(test_scored, best_t, f"TEST @ calibrated threshold {best_t:.2f}")
+
+    out = Path(cfg.output_dir) / "predictions" / f"{cfg.run_name}{'_blank' if args.blank_image else ''}_cosmos_scores.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", encoding="utf-8") as f:
+        for split, scored in (("val", val_scored), ("test", test_scored)):
+            for i, (score, label) in enumerate(scored):
+                f.write(json.dumps({"id": f"{split}_{i}", "split": split, "score": score, "label": label}) + "\n")
+    print(f"\nScores written to {out}")
 
 
 if __name__ == "__main__":
