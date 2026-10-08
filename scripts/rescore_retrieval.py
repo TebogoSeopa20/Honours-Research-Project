@@ -1,7 +1,8 @@
 #!/usr/bin/env python
-"""Re-score the cached retrieval run with the evidence kept but the model's initial
-assessment removed from the final prompt. Uses the evidence saved by
-calibrate_retrieval.py, so no searches or generation are repeated."""
+"""Re-score the cached retrieval run with the model's initial assessment removed from
+the final prompt. Default keeps the saved evidence; --no-evidence also removes it
+(template-only control). Uses the evidence saved by calibrate_retrieval.py, so no
+searches or generation are repeated."""
 import argparse
 import json
 from pathlib import Path
@@ -20,12 +21,14 @@ PLACEHOLDER = "(not provided)"
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
+    ap.add_argument("--no-evidence", action="store_true")
     args = ap.parse_args()
     cfg = Config.from_yaml(args.config)
 
     pred_dir = Path(cfg.output_dir) / "predictions"
     cached = {r["id"]: r for r in read_jsonl(pred_dir / f"{cfg.run_name}_retrieval_cosmos_scores.jsonl")}
-    out_path = pred_dir / f"{cfg.run_name}_retrieval_evonly_cosmos_scores.jsonl"
+    tag = "template_only" if args.no_evidence else "evonly"
+    out_path = pred_dir / f"{cfg.run_name}_retrieval_{tag}_cosmos_scores.jsonl"
     done = {r["id"]: r for r in read_jsonl(out_path)} if out_path.exists() else {}
 
     print("Loading model...")
@@ -45,7 +48,7 @@ def main():
                     prompt = PAIRED_FINAL_VERDICT_PROMPT.format(
                         caption1=rec["caption1"], caption2=rec["caption2"],
                         initial_reasoning=PLACEHOLDER,
-                        evidence=D.format_evidence(cached[rid]["evidence"]),
+                        evidence=PLACEHOLDER if args.no_evidence else D.format_evidence(cached[rid]["evidence"]),
                     )
                     score = get_verdict_score(model, processor, image, prompt, cfg)
                     done[rid] = {"id": rid, "split": split, "score": score, "label": rec["label"]}
@@ -59,7 +62,7 @@ def main():
     best_t, best_f1 = find_best_threshold(scored["val"])
     print(f"\n>>> Best threshold found on validation: {best_t:.2f} (val macro_f1={best_f1:.4f})")
     print(f"\nTEST AUROC (threshold-free): {auroc(scored['test']):.4f}")
-    report(scored["test"], best_t, f"TEST @ calibrated threshold {best_t:.2f} (evidence, no initial assessment)")
+    report(scored["test"], best_t, f"TEST @ calibrated threshold {best_t:.2f} ({tag})")
     print(f"\nScores written to {out_path}")
 
 
